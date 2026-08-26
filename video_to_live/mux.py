@@ -1,30 +1,42 @@
-"""Inject Live Photo movie metadata and the two Core Media mebx tracks."""
+"""Inject Live Photo movie metadata and the two Core Media mebx tracks.
+
+ffmpeg cannot copy mebx (the tag becomes stts). All metadata is written at
+the box/atom level here.
+"""
 
 from __future__ import annotations
 
 import struct
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from video_to_live.boxes import Box, MovError, box, child, full_box, iter_boxes, walk_boxes
 from video_to_live.constants import (
     CONTENT_IDENTIFIER_KEY,
+    FRAME_COUNT,
+    INFO_EMPTY_EDIT,
+    INFO_MEDIA_DURATION,
+    INFO_SAMPLE_COUNT,
+    INFO_SAMPLE_DELTA,
+    INFO_SAMPLES_PER_CHUNK,
+    INFO_TIMESCALE,
     LIVE_PHOTO_AUTO_KEY,
+    LIVE_PHOTO_INFO_KEY,
+    LIVE_PHOTO_INFO_SAMPLE,
+    MVHD_DURATION,
+    STILL_EMPTY_EDIT,
+    STILL_IMAGE_SAMPLE,
     STILL_IMAGE_TIME_KEY,
-    STILL_MARKER_TICKS,
-    STILL_TIME_SECONDS,
+    STILL_IMAGE_TRANSFORM_KEY,
+    STILL_MEDIA_DURATION,
     TIMESCALE,
-    VIDEO_ORIENTATION_KEY,
-    VITALITY_SCORE_KEY,
-    VITALITY_VERSION_KEY,
+    VIDEO_MDHD_DURATION,
+    VIDEO_STTS,
 )
 
 QUICKTIME_EPOCH_OFFSET = 2_082_844_800
-
-# Boxed metadata samples (size + local id + value).
-STILL_IMAGE_SAMPLE = b"\x00\x00\x00\x09\x00\x00\x00\x01\xff"
-# SInt16 1 = top-left; the clip is already 1080x1920 portrait.
-ORIENTATION_SAMPLE = b"\x00\x00\x00\x0a\x00\x00\x00\x01\x00\x01"
+LANGUAGE_UNDETERMINED = 0x55C4
 
 
 def _pascal(text: bytes) -> bytes:
@@ -51,14 +63,6 @@ def _movie_timescale(data: bytes | bytearray, moov: Box) -> int:
     return timescale
 
 
-def _movie_duration(data: bytes | bytearray, moov: Box) -> int:
-    mvhd = child(data, moov, b"mvhd")
-    version = data[mvhd.payload_offset]
-    offset = mvhd.offset + (24 if version == 0 else 36)
-    fmt = ">I" if version == 0 else ">Q"
-    return int(struct.unpack_from(fmt, data, offset)[0])
-
-
 def _track_id(data: bytes | bytearray, track: Box) -> int:
     tkhd = child(data, track, b"tkhd")
     version = data[tkhd.payload_offset]
@@ -66,43 +70,143 @@ def _track_id(data: bytes | bytearray, track: Box) -> int:
     return struct.unpack_from(">I", data, offset)[0]
 
 
-def _mebx_keys(key: bytes, dtyp: int) -> bytes:
-    key_description = struct.pack(">I4s4s", 12 + len(key), b"keyd", b"mdta") + key
-    data_type = box(b"dtyp", struct.pack(">II", 0, dtyp))
-    payload_size = 8 + len(key_description) + len(data_type)
-    return box(b"keys", struct.pack(">II", payload_size, 1) + key_description + data_type)
+def _stsz_count(data: bytes | bytearray, stbl: Box) -> int:
+    stsz = child(data, stbl, b"stsz")
+    return struct.unpack_from(">I", data, stsz.payload_offset + 8)[0]
+
+
+def _media_handler(subtype: bytes, name: bytes) -> bytes:
+    return full_box(
+        b"hdlr",
+        b"mhlr" + subtype + b"appl" + struct.pack(">II", 0, 0) + _pascal(name),
+    )
+
+
+def _data_handler() -> bytes:
+    return full_box(
+        b"hdlr",
+        b"dhlralisappl" + struct.pack(">II", 0, 0) + _pascal(b"Core Media Data Handler"),
+    )
+
+
+def _patched_mvhd(data: bytes, mvhd: Box, duration: int, next_track_id: int) -> bytes:
+    blob = bytearray(data[mvhd.offset : mvhd.end])
+    if blob[8] != 0:
+        raise MovError("mvhd v1 não suportado")
+    struct.pack_into(">I", blob, 20, TIMESCALE)
+    struct.pack_into(">I", blob, 24, duration)
+    struct.pack_into(">I", blob, len(blob) - 4, next_track_id)
+    return bytes(blob)
+
+
+def _patched_tkhd(data: bytes, tkhd: Box, duration: int, flags: int = 0x0F) -> bytes:
+    blob = bytearray(data[tkhd.offset : tkhd.end])
+    if blob[8] != 0:
+        raise MovError("tkhd v1 não suportado")
+    blob[9:12] = flags.to_bytes(3, "big")
+    struct.pack_into(">I", blob, 28, duration)
+    return bytes(blob)
+
+
+def _patched_mdhd(data: bytes, mdhd: Box, duration: int, timescale: int | None = None) -> bytes:
+    blob = bytearray(data[mdhd.offset : mdhd.end])
+    if blob[8] != 0:
+        raise MovError("mdhd v1 não suportado")
+    if timescale is not None:
+        struct.pack_into(">I", blob, 20, timescale)
+    struct.pack_into(">I", blob, 24, duration)
+    struct.pack_into(">H", blob, 28, LANGUAGE_UNDETERMINED)
+    return bytes(blob)
+
+
+def _video_stts() -> bytes:
+    payload = struct.pack(">I", len(VIDEO_STTS))
+    for count, delta in VIDEO_STTS:
+        payload += struct.pack(">II", count, delta)
+    return full_box(b"stts", payload)
+
+
+def _patch_video_track(data: bytes, trak: Box) -> bytes:
+    tkhd = child(data, trak, b"tkhd")
+    mdia = child(data, trak, b"mdia")
+    mdhd = child(data, mdia, b"mdhd")
+    minf = child(data, mdia, b"minf")
+    stbl = child(data, minf, b"stbl")
+    sample_count = _stsz_count(data, stbl)
+    if sample_count != FRAME_COUNT:
+        raise MovError(f"esperado {FRAME_COUNT} quadros, veio {sample_count}")
+
+    new_stbl = box(
+        b"stbl",
+        b"".join(
+            _video_stts() if item.kind == b"stts" else data[item.offset : item.end]
+            for item in iter_boxes(data, stbl.payload_offset, stbl.end)
+        ),
+    )
+    new_minf = box(
+        b"minf",
+        b"".join(
+            new_stbl
+            if item.kind == b"stbl"
+            else _data_handler()
+            if item.kind == b"hdlr"
+            else data[item.offset : item.end]
+            for item in iter_boxes(data, minf.payload_offset, minf.end)
+        ),
+    )
+    new_mdia = box(
+        b"mdia",
+        _patched_mdhd(data, mdhd, VIDEO_MDHD_DURATION, TIMESCALE)
+        + _media_handler(b"vide", b"Core Media Video")
+        + new_minf,
+    )
+    parts = []
+    for item in iter_boxes(data, trak.payload_offset, trak.end):
+        if item.kind == b"tkhd":
+            parts.append(_patched_tkhd(data, tkhd, MVHD_DURATION))
+        elif item.kind == b"edts":
+            continue
+        elif item.kind == b"mdia":
+            parts.append(new_mdia)
+        else:
+            parts.append(data[item.offset : item.end])
+    return box(b"trak", b"".join(parts))
+
+
+def _mebx_key_entry(local_id: int, key: bytes, dtyp_payload: bytes) -> bytes:
+    keyd = struct.pack(">I4s4s", 12 + len(key), b"keyd", b"mdta") + key
+    dtyp = box(b"dtyp", dtyp_payload)
+    return struct.pack(">II", 8 + len(keyd) + len(dtyp), local_id) + keyd + dtyp
+
+
+def _mebx_keys(entries: list[tuple[int, bytes, bytes]]) -> bytes:
+    return box(b"keys", b"".join(_mebx_key_entry(local_id, key, dtyp) for local_id, key, dtyp in entries))
 
 
 def _core_media_track(
     *,
     track_id: int,
-    movie_timescale: int,
-    movie_duration: int,
+    media_timescale: int,
     media_duration: int,
-    sample: bytes,
-    key: bytes,
-    dtyp: int,
-    chunk_offset: int,
-    empty_edit: int = 0,
+    empty_edit: int,
+    media_edit_duration: int,
+    keys: list[tuple[int, bytes, bytes]],
+    sample_size: int,
+    sample_count: int,
+    sample_delta: int,
+    chunk_offsets: list[int],
+    samples_per_chunk: Sequence[tuple[int, int]],
 ) -> bytes:
     timestamp = _now()
-    if chunk_offset > 0xFFFFFFFF:
+    if any(offset > 0xFFFFFFFF for offset in chunk_offsets):
         raise MovError("offset mebx passa de 32 bits")
-    marker_duration = max(1, round(media_duration * movie_timescale / TIMESCALE))
-    if empty_edit:
-        track_duration = empty_edit + marker_duration
-        elst = full_box(
-            b"elst",
-            struct.pack(">I", 2)
-            + struct.pack(">IiHH", empty_edit, -1, 1, 0)
-            + struct.pack(">IiHH", marker_duration, 0, 1, 0),
-        )
-    else:
-        track_duration = movie_duration
-        elst = full_box(
-            b"elst",
-            struct.pack(">I", 1) + struct.pack(">IiHH", movie_duration, 0, 1, 0),
-        )
+    track_duration = empty_edit + media_edit_duration
+    elst = full_box(
+        b"elst",
+        struct.pack(">I", 2)
+        + struct.pack(">IiHH", empty_edit, -1, 1, 0)
+        + struct.pack(">IiHH", media_edit_duration, 0, 1, 0),
+    )
     tkhd = full_box(
         b"tkhd",
         struct.pack(">IIIII", timestamp, timestamp, track_id, 0, track_duration)
@@ -112,34 +216,72 @@ def _core_media_track(
         + struct.pack(">II", 0, 0),
         flags=0x0F,
     )
-    edts = box(b"edts", elst)
     mdhd = full_box(
         b"mdhd",
-        struct.pack(">IIIIHH", timestamp, timestamp, TIMESCALE, media_duration, 0x55C4, 0),
-    )
-    media_handler = full_box(
-        b"hdlr",
-        b"mhlrmetaappl" + struct.pack(">II", 1, 0) + _pascal(b"Core Media Metadata"),
+        struct.pack(
+            ">IIIIHH",
+            timestamp,
+            timestamp,
+            media_timescale,
+            media_duration,
+            LANGUAGE_UNDETERMINED,
+            0,
+        ),
     )
     gmin = full_box(b"gmin", struct.pack(">HHHHhH", 0x40, 0x8000, 0x8000, 0x8000, 0, 0))
-    gmhd = box(b"gmhd", gmin)
-    data_handler = full_box(
-        b"hdlr",
-        b"dhlralisappl" + struct.pack(">II", 0, 0) + _pascal(b"Core Media Data Handler"),
-    )
     alias = full_box(b"alis", flags=1)
     dref = full_box(b"dref", struct.pack(">I", 1) + alias)
-    dinf = box(b"dinf", dref)
-    mebx = box(b"mebx", b"\0" * 6 + struct.pack(">H", 1) + _mebx_keys(key, dtyp))
+    mebx = box(b"mebx", b"\0" * 6 + struct.pack(">H", 1) + _mebx_keys(keys))
     stsd = full_box(b"stsd", struct.pack(">I", 1) + mebx)
-    stts = full_box(b"stts", struct.pack(">III", 1, 1, media_duration))
-    stsc = full_box(b"stsc", struct.pack(">IIII", 1, 1, 1, 1))
-    stsz = full_box(b"stsz", struct.pack(">II", len(sample), 1))
-    stco = full_box(b"stco", struct.pack(">II", 1, chunk_offset))
+    stts = full_box(b"stts", struct.pack(">III", 1, sample_count, sample_delta))
+    stsc_payload = struct.pack(">I", len(samples_per_chunk))
+    for first_chunk, count in samples_per_chunk:
+        stsc_payload += struct.pack(">III", first_chunk, count, 1)
+    stsc = full_box(b"stsc", stsc_payload)
+    stsz = full_box(b"stsz", struct.pack(">II", sample_size, sample_count))
+    stco = full_box(
+        b"stco",
+        struct.pack(">I", len(chunk_offsets)) + b"".join(struct.pack(">I", offset) for offset in chunk_offsets),
+    )
     stbl = box(b"stbl", stsd + stts + stsc + stsz + stco)
-    minf = box(b"minf", gmhd + data_handler + dinf + stbl)
-    mdia = box(b"mdia", mdhd + media_handler + minf)
-    return box(b"trak", tkhd + edts + mdia)
+    minf = box(b"minf", box(b"gmhd", gmin) + _data_handler() + box(b"dinf", dref) + stbl)
+    mdia = box(b"mdia", mdhd + _media_handler(b"meta", b"Core Media Metadata") + minf)
+    return box(b"trak", tkhd + box(b"edts", elst) + mdia)
+
+
+def _info_track(track_id: int, chunk_offsets: list[int]) -> bytes:
+    return _core_media_track(
+        track_id=track_id,
+        media_timescale=INFO_TIMESCALE,
+        media_duration=INFO_MEDIA_DURATION,
+        empty_edit=INFO_EMPTY_EDIT,
+        media_edit_duration=TIMESCALE,  # 1.0 s at 600 Hz
+        keys=[(1, LIVE_PHOTO_INFO_KEY.encode("ascii"), struct.pack(">II", 0, 0))],
+        sample_size=len(LIVE_PHOTO_INFO_SAMPLE),
+        sample_count=INFO_SAMPLE_COUNT,
+        sample_delta=INFO_SAMPLE_DELTA,
+        chunk_offsets=chunk_offsets,
+        samples_per_chunk=((1, INFO_SAMPLES_PER_CHUNK), (2, INFO_SAMPLES_PER_CHUNK)),
+    )
+
+
+def _still_track(track_id: int, chunk_offset: int) -> bytes:
+    return _core_media_track(
+        track_id=track_id,
+        media_timescale=TIMESCALE,
+        media_duration=STILL_MEDIA_DURATION,
+        empty_edit=STILL_EMPTY_EDIT,
+        media_edit_duration=STILL_MEDIA_DURATION,
+        keys=[
+            (1, STILL_IMAGE_TIME_KEY.encode("ascii"), struct.pack(">II", 0, 0x41)),
+            (2, STILL_IMAGE_TRANSFORM_KEY.encode("ascii"), struct.pack(">II", 0, 0x53)),
+        ],
+        sample_size=len(STILL_IMAGE_SAMPLE),
+        sample_count=1,
+        sample_delta=STILL_MEDIA_DURATION,
+        chunk_offsets=[chunk_offset],
+        samples_per_chunk=((1, 1),),
+    )
 
 
 def _movie_metadata(content_identifier: str) -> bytes:
@@ -149,25 +291,20 @@ def _movie_metadata(content_identifier: str) -> bytes:
     handler = box(b"hdlr", b"\0" * 8 + b"mdta" + b"\0" * 14)
     keys = full_box(
         b"keys",
-        struct.pack(">I", 4)
+        struct.pack(">I", 2)
         + box(b"mdta", CONTENT_IDENTIFIER_KEY.encode("ascii"))
-        + box(b"mdta", LIVE_PHOTO_AUTO_KEY.encode("ascii"))
-        + box(b"mdta", VITALITY_SCORE_KEY.encode("ascii"))
-        + box(b"mdta", VITALITY_VERSION_KEY.encode("ascii")),
+        + box(b"mdta", LIVE_PHOTO_AUTO_KEY.encode("ascii")),
     )
     items = box(
         b"ilst",
         box(struct.pack(">I", 1), box(b"data", struct.pack(">II", 1, 0) + identifier))
-        + box(struct.pack(">I", 2), box(b"data", struct.pack(">II", 0x15, 0) + b"\x01"))
-        + box(struct.pack(">I", 3), box(b"data", struct.pack(">II", 0x17, 0) + struct.pack(">f", 1.0)))
-        + box(struct.pack(">I", 4), box(b"data", struct.pack(">II", 0x15, 0) + struct.pack(">i", 4))),
+        + box(struct.pack(">I", 2), box(b"data", struct.pack(">II", 0x15, 0) + b"\x01")),
     )
     return box(b"meta", handler + keys + items)
 
 
 def _rewrite_ftyp() -> bytes:
-    payload = b"qt  " + struct.pack(">I", 0) + b"qt  "
-    return box(b"ftyp", payload)
+    return box(b"ftyp", b"qt  " + struct.pack(">I", 0) + b"qt  ")
 
 
 def _relocated_chunk_offsets(
@@ -204,77 +341,50 @@ def _relocated_chunk_offsets(
             )
 
 
-def _set_next_track_id(data: bytearray, next_track_id: int) -> None:
-    local_moov = Box(0, len(data), b"moov", header_size=0)
-    mvhd = child(data, local_moov, b"mvhd")
-    struct.pack_into(">I", data, mvhd.end - 4, next_track_id)
-
-
 def inject_live_photo_metadata(source: Path, destination: Path, content_identifier: str) -> None:
     original = source.read_bytes()
     top = iter_boxes(original, 0, len(original))
-    ftyp = next((item for item in top if item.kind == b"ftyp"), None)
     moov = next((item for item in top if item.kind == b"moov"), None)
     mdat = next((item for item in top if item.kind == b"mdat"), None)
-    if ftyp is None or moov is None or mdat is None:
-        raise MovError("MOV sem ftyp/moov/mdat")
-    if original[ftyp.payload_offset : ftyp.payload_offset + 4] not in {b"qt  ", b"isom", b"mp41", b"mp42"}:
-        # ffmpeg -brand qt writes qt  ; tolerate a slip and force qt on rewrite.
-        pass
+    if moov is None or mdat is None:
+        raise MovError("MOV sem moov/mdat")
     if moov.header_size != 8 or mdat.header_size != 8:
         raise MovError("caixa de tamanho estendido não suportada")
+    if _movie_timescale(original, moov) != TIMESCALE:
+        raise MovError(f"timescale do filme deve ser {TIMESCALE}")
 
     payload = original[mdat.payload_offset : mdat.end]
-    movie_timescale = _movie_timescale(original, moov)
-    movie_duration = _movie_duration(original, moov)
     children = iter_boxes(original, moov.payload_offset, moov.end)
     track_ids = [_track_id(original, item) for item in children if item.kind == b"trak"]
     next_id = max(track_ids, default=0) + 1
-    empty_edit = max(0, round(STILL_TIME_SECONDS * movie_timescale))
 
-    def tracks(orientation_off: int, still_off: int) -> bytes:
-        orientation = _core_media_track(
-            track_id=next_id,
-            movie_timescale=movie_timescale,
-            movie_duration=movie_duration,
-            media_duration=max(STILL_MARKER_TICKS, round(movie_duration * TIMESCALE / movie_timescale)),
-            sample=ORIENTATION_SAMPLE,
-            key=VIDEO_ORIENTATION_KEY.encode("ascii"),
-            dtyp=0x42,
-            chunk_offset=orientation_off,
-        )
-        still = _core_media_track(
-            track_id=next_id + 1,
-            movie_timescale=movie_timescale,
-            movie_duration=movie_duration,
-            media_duration=STILL_MARKER_TICKS,
-            sample=STILL_IMAGE_SAMPLE,
-            key=STILL_IMAGE_TIME_KEY.encode("ascii"),
-            dtyp=0x41,
-            chunk_offset=still_off,
-            empty_edit=empty_edit,
-        )
-        return orientation + still
+    info_payload = LIVE_PHOTO_INFO_SAMPLE * INFO_SAMPLE_COUNT
+    chunk_stride = INFO_SAMPLES_PER_CHUNK * len(LIVE_PHOTO_INFO_SAMPLE)
+
+    def tracks(info_off: int, still_off: int) -> bytes:
+        return _info_track(next_id, [info_off, info_off + chunk_stride]) + _still_track(next_id + 1, still_off)
 
     meta = _movie_metadata(content_identifier)
-    placeholder = tracks(0, 0)
     kept = bytearray()
     for item in children:
-        if item.kind in {b"udta", b"meta"}:
+        if item.kind in {b"udta", b"meta", b"free"}:
+            continue
+        if item.kind == b"mvhd":
+            kept.extend(_patched_mvhd(original, item, MVHD_DURATION, next_id + 2))
+            continue
+        if item.kind == b"trak":
+            kept.extend(_patch_video_track(original, item))
             continue
         kept.extend(original[item.offset : item.end])
 
-    # First pass: size the new moov (stco values are fixed-width).
     new_ftyp = _rewrite_ftyp()
-    draft_payload = bytes(kept) + placeholder + meta
-    draft_moov = box(b"moov", draft_payload)
+    draft_moov = box(b"moov", bytes(kept) + tracks(0, 0) + meta)
     new_mdat_payload_offset = len(new_ftyp) + len(draft_moov) + 8
-    orientation_off = new_mdat_payload_offset + len(payload)
-    still_off = orientation_off + len(ORIENTATION_SAMPLE)
-    final_tracks = tracks(orientation_off, still_off)
+    info_off = new_mdat_payload_offset + len(payload)
+    still_off = info_off + len(info_payload)
+    final_tracks = tracks(info_off, still_off)
 
     patched = bytearray(bytes(kept) + final_tracks + meta)
-    _set_next_track_id(patched, next_id + 2)
     _relocated_chunk_offsets(
         patched,
         0,
@@ -287,8 +397,7 @@ def inject_live_photo_metadata(source: Path, destination: Path, content_identifi
     if len(new_ftyp) + len(new_moov) + 8 != new_mdat_payload_offset:
         raise MovError("layout moov/mdat inconsistente")
 
-    new_mdat_payload = payload + ORIENTATION_SAMPLE + STILL_IMAGE_SAMPLE
-    new_mdat = box(b"mdat", new_mdat_payload)
+    new_mdat = box(b"mdat", payload + info_payload + STILL_IMAGE_SAMPLE)
     destination.write_bytes(new_ftyp + new_moov + new_mdat)
 
 
@@ -317,23 +426,163 @@ def read_quicktime_keys(path: Path) -> dict[str, bytes]:
         index = struct.unpack_from(">I", data, item.offset + 4)[0]
         if not 1 <= index <= len(names):
             continue
-        data_box = next((child_box for child_box in iter_boxes(data, item.payload_offset, item.end) if child_box.kind == b"data"), None)
+        data_box = next(
+            (child_box for child_box in iter_boxes(data, item.payload_offset, item.end) if child_box.kind == b"data"),
+            None,
+        )
         if data_box is None:
             continue
         out[names[index - 1]] = bytes(data[data_box.payload_offset + 8 : data_box.end])
     return out
 
 
-def mebx_keys(path: Path) -> list[str]:
+def read_mvhd(path: Path) -> tuple[int, int]:
     data = path.read_bytes()
-    found: list[str] = []
+    moov = next((item for item in iter_boxes(data, 0, len(data)) if item.kind == b"moov"), None)
+    if moov is None:
+        raise MovError("MOV sem moov")
+    mvhd = child(data, moov, b"mvhd")
+    version = data[mvhd.payload_offset]
+    timescale_off = mvhd.offset + (20 if version == 0 else 28)
+    duration_off = mvhd.offset + (24 if version == 0 else 36)
+    timescale = struct.unpack_from(">I", data, timescale_off)[0]
+    duration = int(struct.unpack_from(">I" if version == 0 else ">Q", data, duration_off)[0])
+    return timescale, duration
+
+
+def _stts_entries(data: bytes | bytearray, stts: Box) -> list[tuple[int, int]]:
+    count = struct.unpack_from(">I", data, stts.payload_offset + 4)[0]
+    entries = []
+    for index in range(count):
+        entries.append(struct.unpack_from(">II", data, stts.payload_offset + 8 + index * 8))
+    return entries
+
+
+def _stsc_entries(data: bytes | bytearray, stsc: Box) -> list[tuple[int, int, int]]:
+    count = struct.unpack_from(">I", data, stsc.payload_offset + 4)[0]
+    entries = []
+    for index in range(count):
+        entries.append(struct.unpack_from(">III", data, stsc.payload_offset + 8 + index * 12))
+    return entries
+
+
+def _elst_entries(data: bytes | bytearray, trak: Box) -> list[tuple[int, int]]:
+    try:
+        edts = child(data, trak, b"edts")
+        elst = child(data, edts, b"elst")
+    except MovError:
+        return []
+    version = data[elst.payload_offset]
+    count = struct.unpack_from(">I", data, elst.payload_offset + 4)[0]
+    offset = elst.payload_offset + 8
+    entries: list[tuple[int, int]] = []
+    for _ in range(count):
+        if version == 0:
+            duration, media_time = struct.unpack_from(">Ii", data, offset)
+            offset += 12
+        else:
+            duration, media_time = struct.unpack_from(">Qq", data, offset)
+            offset += 20
+        entries.append((duration, media_time))
+    return entries
+
+
+def _first_sample(data: bytes, stbl: Box) -> bytes:
+    stsz = child(data, stbl, b"stsz")
+    default_size, count = struct.unpack_from(">II", data, stsz.payload_offset + 4)
+    if count < 1:
+        return b""
+    size = default_size if default_size else struct.unpack_from(">I", data, stsz.payload_offset + 12)[0]
+    try:
+        offsets = child(data, stbl, b"stco")
+        first = struct.unpack_from(">I", data, offsets.payload_offset + 8)[0]
+    except MovError:
+        offsets = child(data, stbl, b"co64")
+        first = struct.unpack_from(">Q", data, offsets.payload_offset + 8)[0]
+    return bytes(data[first : first + size])
+
+
+def describe_video_track(path: Path) -> dict[str, object]:
+    data = path.read_bytes()
+    moov = next((item for item in iter_boxes(data, 0, len(data)) if item.kind == b"moov"), None)
+    if moov is None:
+        raise MovError("MOV sem moov")
+    for trak in iter_boxes(data, moov.payload_offset, moov.end):
+        if trak.kind != b"trak":
+            continue
+        mdia = child(data, trak, b"mdia")
+        hdlr = child(data, mdia, b"hdlr")
+        subtype = data[hdlr.payload_offset + 8 : hdlr.payload_offset + 12]
+        if subtype != b"vide":
+            continue
+        mdhd = child(data, mdia, b"mdhd")
+        minf = child(data, mdia, b"minf")
+        stbl = child(data, minf, b"stbl")
+        stts = child(data, stbl, b"stts")
+        manufacturer = data[hdlr.payload_offset + 12 : hdlr.payload_offset + 16]
+        name_blob = data[hdlr.payload_offset + 24 : hdlr.end]
+        name = name_blob[1 : 1 + name_blob[0]].decode("latin1") if name_blob else ""
+        language = struct.unpack_from(">H", data, mdhd.payload_offset + 20)[0]
+        duration = struct.unpack_from(">I", data, mdhd.payload_offset + 16)[0]
+        tkhd = child(data, trak, b"tkhd")
+        flags = int.from_bytes(data[tkhd.payload_offset + 1 : tkhd.payload_offset + 4], "big")
+        return {
+            "hdlr_type": data[hdlr.payload_offset + 4 : hdlr.payload_offset + 8],
+            "subtype": subtype,
+            "manufacturer": manufacturer,
+            "name": name,
+            "mdhd_duration": duration,
+            "language": language,
+            "stts": _stts_entries(data, stts),
+            "tkhd_flags": flags,
+        }
+    raise MovError("MOV sem trilha de vídeo")
+
+
+def describe_mebx(path: Path) -> list[dict[str, object]]:
+    data = path.read_bytes()
+    known = (LIVE_PHOTO_INFO_KEY, STILL_IMAGE_TIME_KEY)
+    found: list[dict[str, object]] = []
     for item in walk_boxes(data, 0, len(data)):
         if item.kind != b"trak":
             continue
         blob = data[item.offset : item.end]
         if b"mebx" not in blob:
             continue
-        for key in (STILL_IMAGE_TIME_KEY, VIDEO_ORIENTATION_KEY):
-            if key.encode("ascii") in blob and key not in found:
-                found.append(key)
+        keys = [key for key in known if key.encode("ascii") in blob]
+        if not keys:
+            continue
+        mdia = child(data, item, b"mdia")
+        minf = child(data, mdia, b"minf")
+        stbl = child(data, minf, b"stbl")
+        stsz = child(data, stbl, b"stsz")
+        stts = child(data, stbl, b"stts")
+        stsc = child(data, stbl, b"stsc")
+        mdhd = child(data, mdia, b"mdhd")
+        default_size, count = struct.unpack_from(">II", data, stsz.payload_offset + 4)
+        timescale = struct.unpack_from(">I", data, mdhd.payload_offset + 12)[0]
+        duration = struct.unpack_from(">I", data, mdhd.payload_offset + 16)[0]
+        elst = _elst_entries(data, item)
+        found.append(
+            {
+                "keys": keys,
+                "samples": count,
+                "sample_size": default_size,
+                "stts": _stts_entries(data, stts),
+                "stsc": _stsc_entries(data, stsc),
+                "timescale": timescale,
+                "duration": duration,
+                "empty_edit": elst[0][0] if elst and elst[0][1] == -1 else 0,
+                "first_sample": _first_sample(data, stbl),
+            }
+        )
     return found
+
+
+def mebx_keys(path: Path) -> list[str]:
+    names: list[str] = []
+    for track in describe_mebx(path):
+        for key in track["keys"]:
+            if key not in names:
+                names.append(key)  # type: ignore[arg-type]
+    return names

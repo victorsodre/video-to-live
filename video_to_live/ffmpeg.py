@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from video_to_live.constants import CRF, DURATION, FRAME_COUNT, FPS, HEIGHT, TIMESCALE, WIDTH
+from video_to_live.constants import CRF, ENCODE_DURATION, FRAME_COUNT, FPS, HEIGHT, TIMESCALE, WIDTH
 
 # Flags that actually matter for the lock-screen recipe. Everything else is padding.
 FFMPEG_FLAGS_THAT_MATTER = (
@@ -14,7 +14,7 @@ FFMPEG_FLAGS_THAT_MATTER = (
     "-tag:v hvc1",
     "-pix_fmt yuv420p",
     f"-r {FPS}",
-    f"-t {DURATION:g}",
+    f"-t {ENCODE_DURATION:g}",
     f"-frames:v {FRAME_COUNT}",
     f"scale/pad {WIDTH}x{HEIGHT}",
     f"-movie_timescale {TIMESCALE}",
@@ -58,8 +58,8 @@ def encode_live_mov(ffmpeg: str, source: Path, destination: Path) -> None:
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
         "setsar=1,"
-        f"tpad=stop_mode=clone:stop_duration={DURATION:g},"
-        f"trim=duration={DURATION:g},"
+        f"tpad=stop_mode=clone:stop_duration={ENCODE_DURATION:g},"
+        f"trim=duration={ENCODE_DURATION:g},"
         "setpts=N/FRAME_RATE/TB"
     )
     _run(
@@ -74,7 +74,7 @@ def encode_live_mov(ffmpeg: str, source: Path, destination: Path) -> None:
             "-r",
             str(FPS),
             "-t",
-            str(DURATION),
+            str(ENCODE_DURATION),
             "-frames:v",
             str(FRAME_COUNT),
             "-c:v",
@@ -143,13 +143,13 @@ def make_demo_clip(ffmpeg: str, destination: Path) -> None:
             "-f",
             "lavfi",
             "-i",
-            f"color=c=0x12263a:s={WIDTH}x{HEIGHT}:d={DURATION:g}:r={FPS}",
+            f"color=c=0x12263a:s={WIDTH}x{HEIGHT}:d={ENCODE_DURATION:g}:r={FPS}",
             "-vf",
             vf,
             "-r",
             str(FPS),
             "-t",
-            str(DURATION),
+            str(ENCODE_DURATION),
             "-frames:v",
             str(FRAME_COUNT),
             "-c:v",

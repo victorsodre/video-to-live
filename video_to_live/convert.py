@@ -52,5 +52,5 @@ def convert(
         write_pvt(pvt_path, still_path, movie_path)
         outputs["pvt"] = pvt_path
 
-    assert_recipe(movie_path, still_path)
+    assert_recipe(movie_path, still_path, outputs.get("pvt"))
     return outputs

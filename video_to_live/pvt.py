@@ -11,7 +11,7 @@ PLIST = """\
 <plist version="1.0">
 <dict>
 	<key>PFVideoComplementMetadataVersionKey</key>
-	<integer>1</integer>
+	<string>1</string>
 </dict>
 </plist>
 """

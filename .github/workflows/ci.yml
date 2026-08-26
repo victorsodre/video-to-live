@@ -23,4 +23,5 @@ jobs:
         run: |
           python3 -m video_to_live --make-demo demo/orbits.mp4
           python3 -m video_to_live demo/orbits.mp4 -o /tmp/live
-          python3 -m video_to_live --check /tmp/live/orbits.MOV /tmp/live/orbits.HEIC
+          python3 -m video_to_live --check /tmp/live/orbits.MOV /tmp/live/orbits.HEIC /tmp/live/orbits.pvt
+          test -d /tmp/live/orbits.pvt

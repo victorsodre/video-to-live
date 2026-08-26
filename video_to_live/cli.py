@@ -17,8 +17,9 @@ HELP = """\
 Transforma um vídeo curto em Live Photo pra lock screen do iPhone.
 
 exemplos:
+  video-to-live serve
   video-to-live clipe.mp4
-  video-to-live clipe.mp4 -o saida/
+  video-to-live clipe.mp4 --start 2.4 --end 8.1
   video-to-live --make-demo demo/orbits.mp4
 """
 
@@ -32,7 +33,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-to-live",
         description="Transforma um vídeo curto em Live Photo pra lock screen do iPhone.",
-        epilog="AirDrop a pasta .pvt e recebe no Fotos — não no Files, não zip, não JPG+MOV solto. O iOS que manda se anima. Receita que já passou no aparelho: HEVC hvc1, 1080x1920, container 1.05s.",
+        epilog="Abre a página com `serve` pra escolher o trecho. AirDrop a pasta .pvt e recebe no Fotos — não no Files, não zip, não JPG+MOV solto.",
         formatter_class=PortugueseHelp,
         add_help=False,
     )
@@ -40,6 +41,8 @@ def _parser() -> argparse.ArgumentParser:
     parser._optionals.title = "opções"
     parser.add_argument("input", nargs="?", help="vídeo de entrada (mp4, mov, …)")
     parser.add_argument("-o", "--output", help="pasta de saída (padrão: ao lado do vídeo)")
+    parser.add_argument("--start", type=float, default=None, metavar="S", help="início do trecho, em segundos")
+    parser.add_argument("--end", type=float, default=None, metavar="S", help="fim do trecho, em segundos")
     parser.add_argument("--sem-pvt", action="store_true", help="não monta a pasta .pvt")
     parser.add_argument("--uuid", help="força o content.identifier (senão gera um)")
     parser.add_argument("--make-demo", metavar="ARQUIVO", help="gera o clipe procedural de 1s (sem IP de terceiro)")
@@ -49,7 +52,25 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _serve_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="video-to-live serve",
+        description="Abre a página local pra escolher o trecho e gerar a Live Photo.",
+        formatter_class=PortugueseHelp,
+        add_help=False,
+    )
+    parser._optionals.title = "opções"
+    parser.add_argument("--host", default="127.0.0.1", help="só local, padrão 127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765, help="porta (padrão 8765)")
+    parser.add_argument("--sem-browser", action="store_true", help="não abre o navegador")
+    parser.add_argument("-h", "--help", action="help", help="mostra esta ajuda")
+    return parser
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "serve":
+        return _serve(argv[1:])
     args = _parser().parse_args(argv)
     try:
         if args.make_demo:
@@ -72,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.output) if args.output else None,
             make_pvt=not args.sem_pvt,
             asset_id=args.uuid,
+            start=args.start,
+            end=args.end,
         )
         print("pronto. AirDrop a pasta .pvt pro Fotos (não pro Files).")
         if "pvt" in outputs:
@@ -80,5 +103,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  HEIC {outputs['heic']}  (JPEG/JFIF com MakerApple 17)")
         return 0
     except (ConvertError, FfmpegError, InspectError, MovError, StillError) as error:
+        print(f"erro: {error}", file=sys.stderr)
+        return 1
+
+
+def _serve(argv: list[str]) -> int:
+    from video_to_live.serve import ServeError, serve
+
+    args = _serve_parser().parse_args(argv)
+    try:
+        serve(host=args.host, port=args.port, open_browser=not args.sem_browser)
+        return 0
+    except (OSError, ServeError) as error:
         print(f"erro: {error}", file=sys.stderr)
         return 1

@@ -2,46 +2,58 @@
 
 Transforma um vídeo curto em Live Photo pra lock screen do iPhone.
 
-CLI v0.2. Sem app. O iOS que decide se anima — aqui a gente reconstitui o `.pvt` que já passou no aparelho (26/08/2026).
+Abre a página, escolhe o trecho, gera. O iOS que decide se anima — a gente reconstitui o arquivo que já passou no aparelho (26/08/2026).
 
 ## Instala
 
-Precisa de **ffmpeg com libx265** e Python 3.10+.
+No Mac (ou Linux): **Python 3.10+** e **ffmpeg com libx265**. A página é local; a conversão roda na máquina, não no navegador.
 
 ```bash
-sudo apt-get install ffmpeg          # Debian/Ubuntu
-# brew install ffmpeg                # macOS
+brew install ffmpeg                # macOS
+# sudo apt-get install ffmpeg      # Debian/Ubuntu
 
 git clone https://github.com/victorsodre/video-to-live
 cd video-to-live
 ```
 
-Confere o HEVC:
+Confere o encoder:
 
 ```bash
 ffmpeg -hide_banner -encoders | grep libx265
 ```
 
-## Um comando
+## Escolhe o trecho
 
 ```bash
-python3 -m video_to_live seu-video.mp4
+python3 -m video_to_live serve
 ```
 
-Sai `seu-video.pvt/` (e o par HEIC+MOV ao lado). AirDrop **a pasta `.pvt`** e recebe no **Fotos** — não no Files, não zip, não JPG+MOV solto.
-
-O `.HEIC` é JPEG/JFIF 1080×1920 com MakerApple[17] = o UUID do MOV. Foi assim que o par já animou.
+Abre `http://127.0.0.1:8765/`. Solta o vídeo, arrasta o início e o fim, aperta **Gerar**. Tela de bloqueio usa ~1s — trecho maior é acelerado pra caber.
 
 ## No iPhone
 
-1. AirDrop a pasta `.pvt`
-2. Recebe no Fotos
-3. Tela de bloqueio → Foto → escolhe a Live Photo
+1. Descompacta se veio zip
+2. AirDrop **a pasta `.pvt`**
+3. Recebe no **Fotos** — não no Files
+4. Tela de bloqueio → Foto → escolhe a Live Photo
+
+## Script
+
+```bash
+python3 -m video_to_live clipe.mp4
+python3 -m video_to_live clipe.mp4 --start 2.4 --end 8.1 -o saida/
+```
+
+`--start` e `--end` são o trecho em segundos. Sem eles, vale o primeiro segundo.
+
+Sai `clipe.pvt/` (e o par HEIC+MOV ao lado). AirDrop a pasta `.pvt` e recebe no Fotos — não zip solto, não JPG+MOV solto.
+
+O still é JPEG/JFIF 1080×1920 nomeado `.HEIC`, com MakerApple[17] = o UUID do MOV.
 
 ## O que quebra
 
 - **h264 / avc1** — a lock screen ignora
-- **vídeo longo** — 3 s nativo não rolou; o container fica em 1,05 s
+- **vídeo longo no ritmo original** — 3 s nativo não rolou; o container fica em 1,05 s (trecho maior entra acelerado)
 - **tamanho errado** — 1320×2868 (iPhone 16 Pro Max) também não; fica 1080×1920
 - **ffmpeg `-c copy` nas trilhas mebx** — o tag vira `stts` e o iOS ignora. O muxer escreve átomo por átomo.
 

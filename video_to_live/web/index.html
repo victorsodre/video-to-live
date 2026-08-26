@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live Photo pra lock screen</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="kicker">lock screen</p>
+        <h1>Live Photo pra tela de bloqueio</h1>
+        <p class="lede">Solta o vídeo, escolhe o trecho, gera.</p>
+      </header>
+
+      <label class="drop" id="drop">
+        <input id="file" type="file" accept="video/*" hidden />
+        <span id="drop-label">Solta o vídeo aqui, ou clica pra escolher.</span>
+      </label>
+
+      <section class="studio" id="studio" hidden>
+        <div class="phone">
+          <div class="frame">
+            <video id="preview" playsinline muted loop></video>
+          </div>
+        </div>
+
+        <div class="controls">
+          <p class="times" id="times">0,00s → 1,00s</p>
+          <div class="timeline" id="timeline" role="group" aria-label="Trecho">
+            <div class="track">
+              <div class="range" id="range"></div>
+              <button type="button" class="handle" id="handle-in" aria-label="Início"></button>
+              <button type="button" class="handle" id="handle-out" aria-label="Fim"></button>
+            </div>
+          </div>
+          <p class="hint">Tela de bloqueio usa ~1s. Trecho maior é acelerado pra caber.</p>
+          <p class="meta" id="meta"></p>
+          <button type="button" class="go" id="gerar">Gerar</button>
+          <p class="status" id="status" role="status"></p>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -25,3 +25,6 @@ jobs:
           python3 -m video_to_live demo/orbits.mp4 -o /tmp/live
           python3 -m video_to_live --check /tmp/live/orbits.MOV /tmp/live/orbits.HEIC /tmp/live/orbits.pvt
           test -d /tmp/live/orbits.pvt
+          python3 -m video_to_live demo/orbits.mp4 --start 0 --end 1 -o /tmp/live-range
+          python3 -m video_to_live --check /tmp/live-range/orbits.MOV /tmp/live-range/orbits.HEIC /tmp/live-range/orbits.pvt
+          python3 -m video_to_live serve --help

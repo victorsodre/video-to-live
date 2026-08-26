@@ -6,7 +6,16 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from video_to_live.constants import CRF, ENCODE_DURATION, FRAME_COUNT, FPS, HEIGHT, TIMESCALE, WIDTH
+from video_to_live.constants import (
+    CONTAINER_DURATION,
+    CRF,
+    ENCODE_DURATION,
+    FRAME_COUNT,
+    FPS,
+    HEIGHT,
+    TIMESCALE,
+    WIDTH,
+)
 
 # Flags that actually matter for the lock-screen recipe. Everything else is padding.
 FFMPEG_FLAGS_THAT_MATTER = (
@@ -52,16 +61,88 @@ def _run(cmd: list[str]) -> None:
         raise FfmpegError(f"ffmpeg falhou ({result.returncode}):\n{tail}")
 
 
-def encode_live_mov(ffmpeg: str, source: Path, destination: Path) -> None:
-    vf = (
+def probe_duration(ffmpeg: str, source: Path) -> float | None:
+    probe = shutil.which("ffprobe")
+    if not probe:
+        sibling = Path(ffmpeg).with_name("ffprobe")
+        probe = str(sibling) if sibling.is_file() else None
+    if not probe:
+        return None
+    result = subprocess.run(
+        [
+            probe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(source),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _fit() -> str:
+    return (
         f"fps={FPS},"
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-        "setsar=1,"
-        f"tpad=stop_mode=clone:stop_duration={ENCODE_DURATION:g},"
-        f"trim=duration={ENCODE_DURATION:g},"
-        "setpts=N/FRAME_RATE/TB"
+        "setsar=1"
     )
+
+
+def _finish(pad: bool) -> str:
+    parts = []
+    if pad:
+        parts.append(f"tpad=stop_mode=clone:stop_duration={ENCODE_DURATION:g}")
+    parts.append(f"trim=duration={ENCODE_DURATION:g}")
+    parts.append("setpts=N/FRAME_RATE/TB")
+    return ",".join(parts)
+
+
+def build_video_filter(start: float = 0.0, end: float | None = None) -> str:
+    """Map a source range onto the 1s / 60-frame encode the muxer expects.
+
+    Longer than ~1.05s is time-squeezed. Shorter keeps speed and pads.
+    """
+    start = max(0.0, float(start))
+    fit = _fit()
+    finish_pad = _finish(pad=True)
+
+    if end is None:
+        if start <= 0:
+            return f"{fit},{finish_pad}"
+        return f"trim=start={start:.6f},setpts=PTS-STARTPTS,{fit},{finish_pad}"
+
+    end = float(end)
+    selected = end - start
+    if selected <= 0:
+        raise FfmpegError("o fim tem que ser depois do início")
+
+    trimmed = f"trim=start={start:.6f}:end={end:.6f},setpts=PTS-STARTPTS"
+    if selected > CONTAINER_DURATION:
+        factor = ENCODE_DURATION / selected
+        return f"{trimmed},setpts=PTS*{factor:.10f},{fit},{_finish(pad=False)}"
+    return f"{trimmed},{fit},{finish_pad}"
+
+
+def encode_live_mov(
+    ffmpeg: str,
+    source: Path,
+    destination: Path,
+    *,
+    start: float = 0.0,
+    end: float | None = None,
+) -> None:
+    vf = build_video_filter(start, end)
     _run(
         [
             ffmpeg,
@@ -124,9 +205,10 @@ def extract_still_jpeg(ffmpeg: str, source: Path, destination: Path, time_second
     )
 
 
-def make_demo_clip(ffmpeg: str, destination: Path) -> None:
+def make_demo_clip(ffmpeg: str, destination: Path, duration: float | None = None) -> None:
     """Original procedural motion. No third-party IP."""
     destination.parent.mkdir(parents=True, exist_ok=True)
+    seconds = ENCODE_DURATION if duration is None else float(duration)
     vf = (
         f"hue=h='360*t':s=1.15,"
         f"drawbox=x='iw/2-90+320*sin(2*PI*t)':y='ih/2-90+220*cos(2*PI*t)':"
@@ -136,22 +218,24 @@ def make_demo_clip(ffmpeg: str, destination: Path) -> None:
         f"drawbox=x='640+140*sin(2*PI*t*0.7)':y='1180+260*cos(2*PI*t*1.1)':"
         f"w=220:h=90:color=0x4ecdc4@0.85:t=fill"
     )
-    _run(
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c=0x12263a:s={WIDTH}x{HEIGHT}:d={seconds:g}:r={FPS}",
+        "-vf",
+        vf,
+        "-r",
+        str(FPS),
+        "-t",
+        str(seconds),
+    ]
+    if duration is None:
+        cmd.extend(["-frames:v", str(FRAME_COUNT)])
+    cmd.extend(
         [
-            ffmpeg,
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            f"color=c=0x12263a:s={WIDTH}x{HEIGHT}:d={ENCODE_DURATION:g}:r={FPS}",
-            "-vf",
-            vf,
-            "-r",
-            str(FPS),
-            "-t",
-            str(ENCODE_DURATION),
-            "-frames:v",
-            str(FRAME_COUNT),
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -160,3 +244,4 @@ def make_demo_clip(ffmpeg: str, destination: Path) -> None:
             str(destination),
         ]
     )
+    _run(cmd)

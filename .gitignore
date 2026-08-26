@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+/out/
+/demo/*.mp4
+*.MOV
+*.HEIC
+*.pvt/
+.tmp/
+.DS_Store

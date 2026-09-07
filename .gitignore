@@ -10,3 +10,4 @@ __pycache__/
 *.pvt/
 .tmp/
 .DS_Store
+.playwright-cli/

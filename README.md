@@ -1,69 +1,62 @@
 # video-to-live
 
-Transforma um vídeo curto em Live Photo pra lock screen do iPhone.
+Create an iPhone Lock Screen Live Photo from a short video. The local browser interface is English-first and includes a Brazilian Portuguese option; conversion always runs on your machine.
 
-Abre a página, escolhe o trecho, gera. O iOS que decide se anima — a gente reconstitui o arquivo que já passou no aparelho (26/08/2026).
+This project reproduces a package that was accepted by a test iPhone on 2026-08-26. iOS ultimately decides whether a transferred asset animates, so treat this as a reproducible local recipe, not a platform guarantee.
 
-## Instala
+## Requirements
 
-No Mac (ou Linux): **Python 3.10+** e **ffmpeg com libx265**. A página é local; a conversão roda na máquina, não no navegador.
+Use Python 3.10+ and an ffmpeg build with libx265.
 
-```bash
+~~~bash
 brew install ffmpeg                # macOS
 # sudo apt-get install ffmpeg      # Debian/Ubuntu
 
 git clone https://github.com/victorsodre/video-to-live
 cd video-to-live
-```
-
-Confere o encoder:
-
-```bash
 ffmpeg -hide_banner -encoders | grep libx265
-```
+~~~
 
-## Escolhe o trecho
+## Local interface
 
-```bash
+~~~bash
 python3 -m video_to_live serve
-```
+~~~
 
-Abre `http://127.0.0.1:8765/`. Solta o vídeo, arrasta o início e o fim, aperta **Gerar**. Tela de bloqueio usa ~1s — trecho maior é acelerado pra caber.
+Open http://127.0.0.1:8765/, choose a video, set the start and end handles, and select **Create Live Photo**. The Lock Screen uses about one second; longer clips are sped up to fit. Select **Português (Brasil)** in the interface when preferred.
 
-A página aceita uploads de até 128 MiB por pedido e processa um vídeo por vez. Só aceita acesso local e formulários da própria origem; o servidor mantém no máximo quatro conexões simultâneas, com 15 segundos de tolerância a inatividade durante o envio. Processos de mídia são encerrados após 120 segundos; consultas com ffprobe, após 30 segundos. Para arquivos maiores que o limite de upload, use a CLI abaixo.
+The page accepts uploads up to 128 MiB and runs one conversion at a time. It accepts only local, same-origin requests, permits at most four simultaneous connections, and gives incomplete uploads 15 seconds of idle time. Media processes stop after 120 seconds and ffprobe calls after 30 seconds. Use the CLI for files above the upload limit.
 
-## No iPhone
+## Transfer to iPhone
 
-1. Descompacta se veio zip
-2. AirDrop **a pasta `.pvt`**
-3. Recebe no **Fotos** — não no Files
-4. Tela de bloqueio → Foto → escolhe a Live Photo
+1. Unzip the download if needed.
+2. AirDrop the .pvt **folder**.
+3. Receive it in **Photos**, not Files.
+4. Choose the Live Photo from the Lock Screen photo picker.
 
-## Script
+## Command line
 
-```bash
-python3 -m video_to_live clipe.mp4
-python3 -m video_to_live clipe.mp4 --start 2.4 --end 8.1 -o saida/
-```
+~~~bash
+python3 -m video_to_live clip.mp4
+python3 -m video_to_live clip.mp4 --start 2.4 --end 8.1 -o output/
+~~~
 
-`--start` e `--end` são o trecho em segundos. Sem eles, vale o primeiro segundo.
+--start and --end are seconds; without them, the first second is used. The command creates clip.pvt/ and the adjacent HEIC+MOV pair. AirDrop the .pvt folder to Photos rather than sending a standalone zip or loose JPG+MOV pair.
 
-Sai `clipe.pvt/` (e o par HEIC+MOV ao lado). AirDrop a pasta `.pvt` e recebe no Fotos — não zip solto, não JPG+MOV solto.
+The still is a 1080×1920 JPEG/JFIF named .HEIC, with MakerApple[17] set to the MOV UUID.
 
-O still é JPEG/JFIF 1080×1920 nomeado `.HEIC`, com MakerApple[17] = o UUID do MOV.
+## Known compatibility constraints
 
-## O que quebra
+- **H.264 / avc1:** the tested Lock Screen ignored it.
+- **Original-speed long clips:** a native three-second clip was not accepted; this recipe uses a 1.05-second container and speeds a longer selected range up.
+- **Other dimensions:** 1320×2868 (iPhone 16 Pro Max) was not accepted in this test; the recipe uses 1080×1920.
+- **ffmpeg -c copy for mebx tracks:** it changes the timing tag to stts, which iOS ignored. This project writes the required atoms directly.
 
-- **h264 / avc1** — a lock screen ignora
-- **vídeo longo no ritmo original** — 3 s nativo não rolou; o container fica em 1,05 s (trecho maior entra acelerado)
-- **tamanho errado** — 1320×2868 (iPhone 16 Pro Max) também não; fica 1080×1920
-- **ffmpeg `-c copy` nas trilhas mebx** — o tag vira `stts` e o iOS ignora. O muxer escreve átomo por átomo.
+## Recipe
 
-## A receita (ffmpeg + mux)
+The video is HEVC encoded with:
 
-Encode HEVC:
-
-```text
+~~~text
 -c:v libx265
 -tag:v hvc1
 -pix_fmt yuv420p
@@ -76,17 +69,17 @@ scale/pad 1080x1920
 -brand qt
 -movflags +faststart
 -an
-```
+~~~
 
-O muxer depois deixa o container em 1,05 s (`mvhd` 630/600), `stts` 59×10 + 1×30, hdlr `Core Media Video`, só `content.identifier` + `live-photo.auto=1`, e duas trilhas `mebx`: `live-photo-info` (60 samples) e `still-image-time` (1 sample em 0,5 s). Sem vitality-score.
+The muxer writes a 1.05-second container (mvhd 630/600), stts 59×10 + 1×30, Core Media Video, only content.identifier and live-photo.auto=1, plus two mebx tracks: live-photo-info (60 samples) and still-image-time (one sample at 0.5 seconds). It does not set a vitality score.
 
-Não copia mídia de terceiro. O clipe de demo é gerado na hora:
+No third-party media is included. Generate the procedural demo locally:
 
-```bash
+~~~bash
 python3 -m video_to_live --make-demo demo/orbits.mp4
 python3 -m video_to_live demo/orbits.mp4 -o /tmp/live
-```
+~~~
 
-## Licença
+## License
 
-MIT. Victor ([@ovictor](https://github.com/victorsodre)).
+[MIT](LICENSE). Victor ([@ovictor](https://github.com/ovictor)).

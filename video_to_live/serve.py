@@ -111,7 +111,7 @@ def _float_field(fields: dict[str, tuple[str | None, bytes]], name: str) -> floa
         return None
     value = float(raw)
     if not math.isfinite(value):
-        raise ServeError("o intervalo precisa conter números finitos")
+        raise ServeError("nonFiniteRange")
     return value
 
 
@@ -154,59 +154,59 @@ class LiveHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if not self._local_request():
-            self._json(403, {"erro": "origem não permitida"})
+            self._json(403, {"error": "originNotAllowed"})
             return
         name = PAGES.get(self.path.split("?", 1)[0])
         if name is None:
-            self._send(404, "não achei".encode("utf-8"), "text/plain; charset=utf-8")
+            self._send(404, "Not found".encode("utf-8"), "text/plain; charset=utf-8")
             return
         path = WEB_DIR / name
         if not path.is_file():
-            self._send(404, "não achei".encode("utf-8"), "text/plain; charset=utf-8")
+            self._send(404, "Not found".encode("utf-8"), "text/plain; charset=utf-8")
             return
         self._send(200, path.read_bytes(), TYPES.get(path.suffix, "application/octet-stream"))
 
     def do_POST(self) -> None:  # noqa: N802
         if not self._local_request():
-            self._json(403, {"erro": "origem não permitida"})
+            self._json(403, {"error": "originNotAllowed"})
             return
-        if self.path.split("?", 1)[0] != "/gerar":
-            self._json(404, {"erro": "não achei"})
+        if self.path.split("?", 1)[0] not in {"/generate", "/gerar"}:
+            self._json(404, {"error": "notFound"})
             return
         if not self._conversion_slots.acquire(blocking=False):
-            self._json(429, {"erro": "já há um vídeo em processamento; tente novamente em instantes"})
+            self._json(429, {"error": "alreadyProcessing"})
             return
         try:
             self._gerar()
         except ServeError as error:
-            self._json(error.status, {"erro": str(error)})
+            self._json(error.status, {"error": str(error)})
         except (socket.timeout, TimeoutError):
-            self._json(408, {"erro": "o envio excedeu o limite de tempo"})
+            self._json(408, {"error": "uploadTimedOut"})
         except (ConvertError, FfmpegError, InspectError, MovError, StillError, ValueError):
-            self._json(400, {"erro": "não foi possível converter; confira o formato e o intervalo do vídeo"})
+            self._json(400, {"error": "conversionFailed"})
         except Exception:  # noqa: BLE001
-            self._json(500, {"erro": "não foi possível concluir a conversão"})
+            self._json(500, {"error": "conversionIncomplete"})
         finally:
             self._conversion_slots.release()
 
     def _gerar(self) -> None:
         if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
-            raise ServeError("envie um Content-Length válido")
+            raise ServeError("invalidLength")
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
-            raise ServeError("não veio vídeo")
+            raise ServeError("missingVideo")
         if length > MAX_UPLOAD:
-            raise ServeError("o limite de upload é 128 MiB; para arquivos maiores, use a CLI local", 413)
+            raise ServeError("uploadLimit", 413)
         content_type = self.headers.get("Content-Type", "")
         if "multipart/form-data" not in content_type:
-            raise ServeError("manda o vídeo no formulário")
+            raise ServeError("formRequired")
         body = self.rfile.read(length)
         if len(body) != length:
-            raise ServeError("o envio do arquivo ficou incompleto")
+            raise ServeError("incompleteUpload")
         fields = _parse_multipart(content_type, body)
         upload = fields.get("video") or fields.get("file")
         if upload is None or not upload[1]:
-            raise ServeError("solta um vídeo primeiro")
+            raise ServeError("missingVideo")
         filename, data = upload
         start = _float_field(fields, "start") or 0.0
         end = _float_field(fields, "end")
@@ -234,18 +234,18 @@ class LiveHandler(BaseHTTPRequestHandler):
 
 def serve(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
     if host not in {"127.0.0.1", "localhost"}:
-        raise ServeError("a página de conversão funciona apenas em localhost")
+        raise ServeError("The conversion page is available only on localhost.")
     if not WEB_DIR.is_dir():
-        raise ServeError(f"faltou a pasta da página: {WEB_DIR}")
+        raise ServeError(f"Web directory is missing: {WEB_DIR}")
     httpd = BoundedHTTPServer(("127.0.0.1", port), LiveHandler)
     url = f"http://{host}:{httpd.server_port}/"
-    print(f"abre {url}")
-    print("Ctrl+C pra fechar.")
+    print(f"Open {url}")
+    print("Press Ctrl+C to stop.")
     if open_browser:
         webbrowser.open(url)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nfechou.")
+        print("\nStopped.")
     finally:
         httpd.server_close()

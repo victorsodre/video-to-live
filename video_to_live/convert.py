@@ -33,16 +33,16 @@ def resolve_range(
 ) -> tuple[float, float | None]:
     start = 0.0 if start is None else float(start)
     if start < 0:
-        raise ConvertError("início não pode ser negativo")
+        raise ConvertError("start cannot be negative")
     if source_duration is not None and start >= source_duration:
-        raise ConvertError("início depois do fim do vídeo")
+        raise ConvertError("start is after the end of the video")
     if end is None:
         return start, None
     end = float(end)
     if source_duration is not None:
         end = min(end, source_duration)
     if end <= start:
-        raise ConvertError("o fim tem que ser depois do início")
+        raise ConvertError("end must be after start")
     return start, end
 
 
@@ -58,7 +58,7 @@ def convert(
 ) -> dict[str, Path]:
     source = source.expanduser().resolve()
     if not source.is_file():
-        raise ConvertError(f"não achei o vídeo: {source}")
+        raise ConvertError(f"video was not found: {source}")
 
     output_dir = (output_dir or source.parent).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

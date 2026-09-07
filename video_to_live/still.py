@@ -36,7 +36,7 @@ def build_apple_makernote(asset_id: str) -> bytes:
     )
     blob = header + ifd + payload
     if len(header) + len(ifd) != string_offset:
-        raise StillError("layout interno do MakerNote Apple")
+        raise StillError("unexpected Apple MakerNote layout")
     return blob
 
 
@@ -63,7 +63,7 @@ def build_exif_app1(asset_id: str) -> bytes:
         + struct.pack(">I", 0)
     )
     if ifd0_off + len(ifd0) != make_off:
-        raise StillError("layout IFD0")
+        raise StillError("unexpected IFD0 layout")
 
     exif_ifd = (
         _be16(1)
@@ -71,9 +71,9 @@ def build_exif_app1(asset_id: str) -> bytes:
         + struct.pack(">I", 0)
     )
     if make_off + len(make) != exif_ifd_off:
-        raise StillError("layout Make")
+        raise StillError("unexpected Make layout")
     if exif_ifd_off + len(exif_ifd) != makernote_off:
-        raise StillError("layout ExifIFD")
+        raise StillError("unexpected ExifIFD layout")
 
     tiff = (
         b"MM\x00\x2a"
@@ -89,12 +89,12 @@ def build_exif_app1(asset_id: str) -> bytes:
 
 def _jpeg_segments(data: bytes) -> list[tuple[int, bytes]]:
     if data[:2] != SOI:
-        raise StillError("ainda não é JPEG")
+        raise StillError("still image is not JPEG")
     segments: list[tuple[int, bytes]] = []
     offset = 2
     while offset + 2 <= len(data):
         if data[offset] != 0xFF:
-            raise StillError("JPEG quebrado")
+            raise StillError("invalid JPEG")
         marker = data[offset + 1]
         if marker == 0xDA:  # SOS: rest of file including entropy + EOI
             segments.append((marker, data[offset:]))
@@ -107,14 +107,14 @@ def _jpeg_segments(data: bytes) -> list[tuple[int, bytes]]:
             offset += 2
             continue
         if offset + 4 > len(data):
-            raise StillError("segmento JPEG cortado")
+            raise StillError("truncated JPEG segment")
         length = struct.unpack_from(">H", data, offset + 2)[0]
         end = offset + 2 + length
         if end > len(data):
-            raise StillError("segmento JPEG maior que o arquivo")
+            raise StillError("JPEG segment extends beyond the file")
         segments.append((marker, data[offset:end]))
         offset = end
-    raise StillError("JPEG sem SOS")
+    raise StillError("JPEG has no SOS marker")
 
 
 def stamp_jpeg(jpeg: bytes, asset_id: str) -> bytes:
@@ -138,7 +138,7 @@ def stamp_jpeg(jpeg: bytes, asset_id: str) -> bytes:
             inserted = True
         kept.append(blob)
     if not inserted:
-        raise StillError("não deu pra encaixar o Exif no JPEG")
+        raise StillError("Exif data does not fit in the JPEG")
     return b"".join(kept)
 
 

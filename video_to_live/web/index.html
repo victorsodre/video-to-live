@@ -1,22 +1,31 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Live Photo pra lock screen</title>
+    <title>Live Photo for your Lock Screen</title>
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
     <main>
       <header>
-        <p class="kicker">lock screen</p>
-        <h1>Live Photo pra tela de bloqueio</h1>
-        <p class="lede">Solta o vídeo, escolhe o trecho, gera.</p>
+        <div class="header-row">
+          <p class="kicker" data-i18n="kicker">lock screen</p>
+          <label class="language" for="language">
+            <span class="sr-only" data-i18n="languageLabel">Language</span>
+            <select id="language" aria-label="Language" data-i18n-aria="languageLabel">
+              <option value="en">English</option>
+              <option value="pt-BR">Português (Brasil)</option>
+            </select>
+          </label>
+        </div>
+        <h1 data-i18n="title">Live Photo for your Lock Screen</h1>
+        <p class="lede" data-i18n="lede">Drop a video, choose a clip, and create it.</p>
       </header>
 
       <label class="drop" id="drop">
         <input id="file" type="file" accept="video/*" hidden />
-        <span id="drop-label">Solta o vídeo aqui, ou clica pra escolher.</span>
+        <span id="drop-label" data-i18n="dropLabel">Drop a video here, or click to choose one.</span>
       </label>
 
       <section class="studio" id="studio" hidden>
@@ -28,16 +37,16 @@
 
         <div class="controls">
           <p class="times" id="times">0,00s → 1,00s</p>
-          <div class="timeline" id="timeline" role="group" aria-label="Trecho">
+          <div class="timeline" id="timeline" role="group" aria-label="Clip range" data-i18n-aria="clipRange">
             <div class="track">
               <div class="range" id="range"></div>
-              <button type="button" class="handle" id="handle-in" aria-label="Início"></button>
-              <button type="button" class="handle" id="handle-out" aria-label="Fim"></button>
+              <button type="button" class="handle" id="handle-in" aria-label="Start" data-i18n-aria="start"></button>
+              <button type="button" class="handle" id="handle-out" aria-label="End" data-i18n-aria="end"></button>
             </div>
           </div>
-          <p class="hint">Tela de bloqueio usa ~1s. Trecho maior é acelerado pra caber.</p>
+          <p class="hint" data-i18n="hint">The Lock Screen uses about one second. Longer clips are sped up to fit.</p>
           <p class="meta" id="meta"></p>
-          <button type="button" class="go" id="gerar">Gerar</button>
+          <button type="button" class="go" id="generate" data-i18n="generate">Create Live Photo</button>
           <p class="status" id="status" role="status"></p>
         </div>
       </section>

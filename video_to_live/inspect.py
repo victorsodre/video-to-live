@@ -50,7 +50,7 @@ class InspectError(RuntimeError):
 def _ffprobe(path: Path) -> dict:
     probe = shutil.which("ffprobe")
     if not probe:
-        raise InspectError("não achei o ffprobe")
+        raise InspectError("ffprobe was not found")
     result = run_media_process(
         [
             probe,
@@ -66,7 +66,7 @@ def _ffprobe(path: Path) -> dict:
         timeout=30,
     )
     if result.returncode != 0:
-        raise InspectError(result.stderr.strip() or "ffprobe falhou")
+        raise InspectError(result.stderr.strip() or "ffprobe failed")
     return json.loads(result.stdout)
 
 
@@ -74,7 +74,7 @@ def inspect_pair(movie: Path, still: Path | None = None, pvt: Path | None = None
     info = _ffprobe(movie)
     video = next((stream for stream in info.get("streams", []) if stream.get("codec_type") == "video"), None)
     if video is None:
-        return [Check(False, "trilha de vídeo", "ffprobe não viu vídeo")]
+        return [Check(False, "video track", "ffprobe did not detect video")]
 
     codec = video.get("codec_name")
     tag = video.get("codec_tag_string")
@@ -217,5 +217,5 @@ def assert_recipe(movie: Path, still: Path | None = None, pvt: Path | None = Non
     checks = inspect_pair(movie, still, pvt)
     report = format_report(checks)
     if not all(check.ok for check in checks):
-        raise InspectError("saída fora da receita:\n" + report)
+        raise InspectError("output does not match the recipe:\n" + report)
     return report

@@ -42,20 +42,20 @@ def run_media_process(cmd: list[str], *, check: bool = False, timeout: float = 1
     try:
         return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
     except subprocess.TimeoutExpired as error:
-        raise FfmpegError("o processamento de mídia excedeu o limite de tempo") from error
+        raise FfmpegError("media processing exceeded the time limit") from error
 
 
 def require_ffmpeg() -> str:
     path = shutil.which("ffmpeg")
     if not path:
-        raise FfmpegError("não achei o ffmpeg no PATH")
+        raise FfmpegError("ffmpeg was not found on PATH")
     encoders = run_media_process(
         [path, "-hide_banner", "-encoders"],
         check=True,
         timeout=30,
     ).stdout
     if "libx265" not in encoders:
-        raise FfmpegError("ffmpeg sem libx265 — precisa de HEVC pra iOS aceitar")
+        raise FfmpegError("ffmpeg does not include libx265; HEVC is required for iOS")
     return path
 
 
@@ -64,7 +64,7 @@ def _run(cmd: list[str]) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
         tail = "\n".join(detail[-12:])
-        raise FfmpegError(f"ffmpeg falhou ({result.returncode}):\n{tail}")
+        raise FfmpegError(f"ffmpeg failed ({result.returncode}):\n{tail}")
 
 
 def probe_duration(ffmpeg: str, source: Path) -> float | None:
@@ -130,7 +130,7 @@ def build_video_filter(start: float = 0.0, end: float | None = None) -> str:
     end = float(end)
     selected = end - start
     if selected <= 0:
-        raise FfmpegError("o fim tem que ser depois do início")
+        raise FfmpegError("end must be after start")
 
     trimmed = f"trim=start={start:.6f}:end={end:.6f},setpts=PTS-STARTPTS"
     if selected > CONTAINER_DURATION:

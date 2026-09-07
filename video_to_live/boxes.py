@@ -43,18 +43,18 @@ def iter_boxes(data: bytes | bytearray, start: int, end: int) -> tuple[Box, ...]
     offset = start
     while offset < end:
         if offset + 8 > end:
-            raise MovError("caixa MOV cortada")
+            raise MovError("truncated MOV box")
         size, kind = struct.unpack_from(">I4s", data, offset)
         header_size = 8
         if size == 1:
             if offset + 16 > end:
-                raise MovError("caixa MOV estendida cortada")
+                raise MovError("truncated extended MOV box")
             size = struct.unpack_from(">Q", data, offset + 8)[0]
             header_size = 16
         elif size == 0:
             size = end - offset
         if size < header_size or offset + size > end:
-            raise MovError(f"tamanho inválido em {kind!r}: {size}")
+            raise MovError(f"invalid size in {kind!r}: {size}")
         boxes.append(Box(offset, size, kind, header_size))
         offset += size
     return tuple(boxes)
@@ -64,13 +64,13 @@ def child(data: bytes | bytearray, parent: Box, kind: bytes) -> Box:
     for box in iter_boxes(data, parent.payload_offset, parent.end):
         if box.kind == kind:
             return box
-    raise MovError(f"faltou a caixa {kind.decode('latin1')}")
+    raise MovError(f"missing {kind.decode('latin1')} box")
 
 
 def box(kind: bytes, payload: bytes) -> bytes:
     size = 8 + len(payload)
     if size > 0xFFFFFFFF:
-        raise MovError(f"caixa {kind!r} grande demais")
+        raise MovError(f"{kind!r} box is too large")
     return struct.pack(">I4s", size, kind) + payload
 
 

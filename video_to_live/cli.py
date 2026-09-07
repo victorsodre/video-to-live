@@ -1,4 +1,4 @@
-"""CLI in spoken Brazilian Portuguese."""
+"""Command-line interface for video-to-live."""
 
 from __future__ import annotations
 
@@ -14,56 +14,56 @@ from video_to_live.mux import MovError
 from video_to_live.still import StillError
 
 HELP = """\
-Transforma um vídeo curto em Live Photo pra lock screen do iPhone.
+Turn a short video into an iPhone Lock Screen Live Photo.
 
-exemplos:
+examples:
   video-to-live serve
-  video-to-live clipe.mp4
-  video-to-live clipe.mp4 --start 2.4 --end 8.1
+  video-to-live clip.mp4
+  video-to-live clip.mp4 --start 2.4 --end 8.1
   video-to-live --make-demo demo/orbits.mp4
 """
 
 
-class PortugueseHelp(argparse.RawDescriptionHelpFormatter):
+class EnglishHelp(argparse.RawDescriptionHelpFormatter):
     def add_usage(self, usage, actions, groups, prefix=None):
-        return super().add_usage(usage, actions, groups, prefix if prefix is not None else "uso: ")
+        return super().add_usage(usage, actions, groups, prefix if prefix is not None else "usage: ")
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-to-live",
-        description="Transforma um vídeo curto em Live Photo pra lock screen do iPhone.",
-        epilog="Abre a página com `serve` pra escolher o trecho. AirDrop a pasta .pvt e recebe no Fotos — não no Files, não zip, não JPG+MOV solto.",
-        formatter_class=PortugueseHelp,
+        description="Turn a short video into an iPhone Lock Screen Live Photo.",
+        epilog="Open the local page with `serve` to choose a clip. AirDrop the .pvt folder to Photos, not Files, a standalone zip, or separate JPG+MOV files.",
+        formatter_class=EnglishHelp,
         add_help=False,
     )
-    parser._positionals.title = "entrada"
-    parser._optionals.title = "opções"
-    parser.add_argument("input", nargs="?", help="vídeo de entrada (mp4, mov, …)")
-    parser.add_argument("-o", "--output", help="pasta de saída (padrão: ao lado do vídeo)")
-    parser.add_argument("--start", type=float, default=None, metavar="S", help="início do trecho, em segundos")
-    parser.add_argument("--end", type=float, default=None, metavar="S", help="fim do trecho, em segundos")
-    parser.add_argument("--sem-pvt", action="store_true", help="não monta a pasta .pvt")
-    parser.add_argument("--uuid", help="força o content.identifier (senão gera um)")
-    parser.add_argument("--make-demo", metavar="ARQUIVO", help="gera o clipe procedural de 1s (sem IP de terceiro)")
-    parser.add_argument("--check", nargs="+", metavar="ARQUIVO", help="confere MOV HEIC PVT na receita")
-    parser.add_argument("-h", "--help", action="help", help="mostra esta ajuda")
-    parser.add_argument("--version", action="version", version=f"video-to-live {__version__}", help="mostra a versão")
+    parser._positionals.title = "input"
+    parser._optionals.title = "options"
+    parser.add_argument("input", nargs="?", help="input video (mp4, mov, …)")
+    parser.add_argument("-o", "--output", help="output directory (default: beside the input video)")
+    parser.add_argument("--start", type=float, default=None, metavar="S", help="clip start in seconds")
+    parser.add_argument("--end", type=float, default=None, metavar="S", help="clip end in seconds")
+    parser.add_argument("--sem-pvt", action="store_true", help="do not create the .pvt folder")
+    parser.add_argument("--uuid", help="set content.identifier instead of generating one")
+    parser.add_argument("--make-demo", metavar="FILE", help="create a one-second procedural demo clip without third-party IP")
+    parser.add_argument("--check", nargs="+", metavar="FILE", help="verify MOV, HEIC, and PVT against the recipe")
+    parser.add_argument("-h", "--help", action="help", help="show this help message")
+    parser.add_argument("--version", action="version", version=f"video-to-live {__version__}", help="show the version")
     return parser
 
 
 def _serve_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-to-live serve",
-        description="Abre a página local pra escolher o trecho e gerar a Live Photo.",
-        formatter_class=PortugueseHelp,
+        description="Open the local page to choose a clip and create a Live Photo.",
+        formatter_class=EnglishHelp,
         add_help=False,
     )
-    parser._optionals.title = "opções"
-    parser.add_argument("--host", default="127.0.0.1", help="só local, padrão 127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765, help="porta (padrão 8765)")
-    parser.add_argument("--sem-browser", action="store_true", help="não abre o navegador")
-    parser.add_argument("-h", "--help", action="help", help="mostra esta ajuda")
+    parser._optionals.title = "options"
+    parser.add_argument("--host", default="127.0.0.1", help="local only; default: 127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765, help="port (default: 8765)")
+    parser.add_argument("--sem-browser", action="store_true", help="do not open a browser")
+    parser.add_argument("-h", "--help", action="help", help="show this help message")
     return parser
 
 
@@ -96,14 +96,14 @@ def main(argv: list[str] | None = None) -> int:
             start=args.start,
             end=args.end,
         )
-        print("pronto. AirDrop a pasta .pvt pro Fotos (não pro Files).")
+        print("Ready. AirDrop the .pvt folder to Photos, not Files.")
         if "pvt" in outputs:
             print(f"  PVT  {outputs['pvt']}")
         print(f"  MOV  {outputs['mov']}")
         print(f"  HEIC {outputs['heic']}  (JPEG/JFIF com MakerApple 17)")
         return 0
     except (ConvertError, FfmpegError, InspectError, MovError, StillError) as error:
-        print(f"erro: {error}", file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
         return 1
 
 
@@ -115,5 +115,5 @@ def _serve(argv: list[str]) -> int:
         serve(host=args.host, port=args.port, open_browser=not args.sem_browser)
         return 0
     except (OSError, ServeError) as error:
-        print(f"erro: {error}", file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
         return 1

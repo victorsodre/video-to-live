@@ -53,8 +53,8 @@ class RangeAndServeTests(unittest.TestCase):
                 home = page.getresponse()
                 html = home.read().decode("utf-8")
                 self.assertEqual(home.status, 200)
-                self.assertIn("Gerar", html)
-                self.assertIn("Tela de bloqueio usa ~1s", html)
+                self.assertIn("Create Live Photo", html)
+                self.assertIn("The Lock Screen uses about one second", html)
                 page.close()
 
                 boundary = "----videotoliveboundary"
@@ -77,7 +77,7 @@ class RangeAndServeTests(unittest.TestCase):
                 conn = HTTPConnection(host, port, timeout=120)
                 conn.request(
                     "POST",
-                    "/gerar",
+                    "/generate",
                     body=body,
                     headers={
                         "Content-Type": f"multipart/form-data; boundary={boundary}",

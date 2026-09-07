@@ -152,6 +152,12 @@ class LiveHandler(BaseHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self._send(status, body, "application/json; charset=utf-8")
 
+    def _post_error(self, endpoint: str, status: int, error: str) -> None:
+        payload = {"error": error}
+        if endpoint == "/gerar":
+            payload["erro"] = error
+        self._json(status, payload)
+
     def do_GET(self) -> None:  # noqa: N802
         if not self._local_request():
             self._json(403, {"error": "originNotAllowed"})
@@ -167,25 +173,26 @@ class LiveHandler(BaseHTTPRequestHandler):
         self._send(200, path.read_bytes(), TYPES.get(path.suffix, "application/octet-stream"))
 
     def do_POST(self) -> None:  # noqa: N802
+        endpoint = self.path.split("?", 1)[0]
         if not self._local_request():
-            self._json(403, {"error": "originNotAllowed"})
+            self._post_error(endpoint, 403, "originNotAllowed")
             return
-        if self.path.split("?", 1)[0] not in {"/generate", "/gerar"}:
-            self._json(404, {"error": "notFound"})
+        if endpoint not in {"/generate", "/gerar"}:
+            self._post_error(endpoint, 404, "notFound")
             return
         if not self._conversion_slots.acquire(blocking=False):
-            self._json(429, {"error": "alreadyProcessing"})
+            self._post_error(endpoint, 429, "alreadyProcessing")
             return
         try:
             self._gerar()
         except ServeError as error:
-            self._json(error.status, {"error": str(error)})
+            self._post_error(endpoint, error.status, str(error))
         except (socket.timeout, TimeoutError):
-            self._json(408, {"error": "uploadTimedOut"})
+            self._post_error(endpoint, 408, "uploadTimedOut")
         except (ConvertError, FfmpegError, InspectError, MovError, StillError, ValueError):
-            self._json(400, {"error": "conversionFailed"})
+            self._post_error(endpoint, 400, "conversionFailed")
         except Exception:  # noqa: BLE001
-            self._json(500, {"error": "conversionIncomplete"})
+            self._post_error(endpoint, 500, "conversionIncomplete")
         finally:
             self._conversion_slots.release()
 

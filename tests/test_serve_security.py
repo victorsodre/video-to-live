@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from http.client import HTTPConnection
@@ -22,25 +23,45 @@ class LocalServerSecurityTests(unittest.TestCase):
         try:
             connection.request(method, path, body=body, headers=headers or {})
             response = connection.getresponse()
-            response.read()
-            return response.status
+            return response.status, response.read()
         finally:
             connection.close()
 
     def test_rejects_foreign_host(self):
-        self.assertEqual(self.request("GET", "/", headers={"Host": "untrusted.example"}), 403)
+        status, _ = self.request("GET", "/", headers={"Host": "untrusted.example"})
+        self.assertEqual(status, 403)
 
-    def test_rejects_cross_origin_form(self):
-        self.assertEqual(self.request("POST", "/gerar", b"x", {"Origin": "https://untrusted.example"}), 403)
+    def test_post_error_schema_preserves_legacy_alias(self):
+        for path, legacy in (("/generate", False), ("/gerar", True)):
+            with self.subTest(path=path, phase="preflight"):
+                status, body = self.request("POST", path, b"x", {"Origin": "https://untrusted.example"})
+                self.assertEqual(status, 403)
+                payload = json.loads(body)
+                self.assertEqual(payload["error"], "originNotAllowed")
+                self.assertEqual("erro" in payload, legacy)
+                if legacy:
+                    self.assertEqual(payload["erro"], payload["error"])
+
+            with self.subTest(path=path, phase="handler"):
+                status, body = self.request("POST", path, b"x")
+                self.assertEqual(status, 400)
+                payload = json.loads(body)
+                self.assertEqual(payload["error"], "formRequired")
+                self.assertEqual("erro" in payload, legacy)
+                if legacy:
+                    self.assertEqual(payload["erro"], payload["error"])
 
     def test_rejects_oversized_upload_without_reading_it(self):
-        self.assertEqual(self.request("POST", "/gerar", headers={"Content-Length": str(MAX_UPLOAD + 1)}), 413)
+        status, _ = self.request("POST", "/gerar", headers={"Content-Length": str(MAX_UPLOAD + 1)})
+        self.assertEqual(status, 413)
 
     def test_rejects_busy_conversion_without_reading_upload(self):
         slot = threading.BoundedSemaphore(1)
         slot.acquire()
         with patch.object(LiveHandler, "_conversion_slots", slot, create=True):
-            self.assertEqual(self.request("POST", "/gerar", b"x"), 429)
+            status, _ = self.request("POST", "/gerar", b"x")
+            self.assertEqual(status, 429)
 
     def test_local_page_still_works(self):
-        self.assertEqual(self.request("GET", "/"), 200)
+        status, _ = self.request("GET", "/")
+        self.assertEqual(status, 200)

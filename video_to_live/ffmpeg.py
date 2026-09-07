@@ -38,15 +38,21 @@ class FfmpegError(RuntimeError):
     pass
 
 
+def run_media_process(cmd: list[str], *, check: bool = False, timeout: float = 120) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise FfmpegError("o processamento de mídia excedeu o limite de tempo") from error
+
+
 def require_ffmpeg() -> str:
     path = shutil.which("ffmpeg")
     if not path:
         raise FfmpegError("não achei o ffmpeg no PATH")
-    encoders = subprocess.run(
+    encoders = run_media_process(
         [path, "-hide_banner", "-encoders"],
         check=True,
-        capture_output=True,
-        text=True,
+        timeout=30,
     ).stdout
     if "libx265" not in encoders:
         raise FfmpegError("ffmpeg sem libx265 — precisa de HEVC pra iOS aceitar")
@@ -54,7 +60,7 @@ def require_ffmpeg() -> str:
 
 
 def _run(cmd: list[str]) -> None:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_media_process(cmd)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip().splitlines()
         tail = "\n".join(detail[-12:])
@@ -68,7 +74,7 @@ def probe_duration(ffmpeg: str, source: Path) -> float | None:
         probe = str(sibling) if sibling.is_file() else None
     if not probe:
         return None
-    result = subprocess.run(
+    result = run_media_process(
         [
             probe,
             "-v",
@@ -79,8 +85,7 @@ def probe_duration(ffmpeg: str, source: Path) -> float | None:
             "default=noprint_wrappers=1:nokey=1",
             str(source),
         ],
-        capture_output=True,
-        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         return None

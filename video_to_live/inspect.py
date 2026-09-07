@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from video_to_live.constants import (
     VITALITY_VERSION_KEY,
     WIDTH,
 )
+from video_to_live.ffmpeg import run_media_process
 from video_to_live.mux import describe_mebx, describe_video_track, read_mvhd, read_quicktime_keys
 from video_to_live.still import read_asset_identifier
 
@@ -51,7 +51,7 @@ def _ffprobe(path: Path) -> dict:
     probe = shutil.which("ffprobe")
     if not probe:
         raise InspectError("não achei o ffprobe")
-    result = subprocess.run(
+    result = run_media_process(
         [
             probe,
             "-v",
@@ -63,8 +63,7 @@ def _ffprobe(path: Path) -> dict:
             "-count_packets",
             str(path),
         ],
-        capture_output=True,
-        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         raise InspectError(result.stderr.strip() or "ffprobe falhou")

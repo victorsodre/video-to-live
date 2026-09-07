@@ -30,6 +30,8 @@ python3 -m video_to_live serve
 
 Abre `http://127.0.0.1:8765/`. Solta o vídeo, arrasta o início e o fim, aperta **Gerar**. Tela de bloqueio usa ~1s — trecho maior é acelerado pra caber.
 
+A página aceita uploads de até 128 MiB por pedido e processa um vídeo por vez. Só aceita acesso local e formulários da própria origem; o servidor mantém no máximo quatro conexões simultâneas, com 15 segundos de tolerância a inatividade durante o envio. Processos de mídia são encerrados após 120 segundos; consultas com ffprobe, após 30 segundos. Para arquivos maiores que o limite de upload, use a CLI abaixo.
+
 ## No iPhone
 
 1. Descompacta se veio zip
